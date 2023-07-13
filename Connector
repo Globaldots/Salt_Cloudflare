@@ -1,1 +1,229 @@
-ddfddfdf
+async function checkExchange(info, settings) {
+    const { request, response } = info;
+    if (!checkRequest(request, settings)) {
+        return;
+    }
+    if (!checkResponse(response, settings)) {
+        return;
+    }
+    const requestBody = await request.arrayBuffer();
+    if (!checkRequestBody(requestBody, settings)) {
+        return;
+    }
+    const responseBody = await response.arrayBuffer();
+    if (!checkResponseBody(responseBody, settings)) {
+        return;
+    }
+	const validatedProps = validateProps(settings);
+	
+    return {
+        ...info,
+        requestBody,
+        responseBody,
+		validatedProps,
+    };
+}
+function checkRequest(request, settings) {
+    const { url, headers } = request;
+    const { pathname } = new URL(url);
+    const { requestUrlPathWhitelist, requestUrlPathBlacklist, requestHeaderWhitelist, requestHeaderBlacklist, } = settings;
+    if (requestUrlPathWhitelist.length &&
+        !requestUrlPathWhitelist.some((value) => pathname === value)) {
+        return false;
+    }
+    if (requestUrlPathBlacklist.length &&
+        requestUrlPathBlacklist.some((value) => pathname === value)) {
+        return false;
+    }
+    if (requestHeaderWhitelist.length &&
+        !requestHeaderWhitelist.some((name) => headers.has(name))) {
+        return false;
+    }
+    if (requestHeaderBlacklist.length &&
+        requestHeaderBlacklist.some((name) => headers.has(name))) {
+        return false;
+    }
+    return true;
+}
+function checkResponse(response, settings) {
+    const { headers } = response;
+    const { responseHeaderWhitelist, responseHeaderBlacklist } = settings;
+    if (responseHeaderWhitelist.length &&
+        !responseHeaderWhitelist.some((name) => headers.has(name))) {
+        return false;
+    }
+    if (responseHeaderBlacklist.length &&
+        responseHeaderBlacklist.some((name) => headers.has(name))) {
+        return false;
+    }
+    return true;
+}
+function checkRequestBody(body, settings) {
+    const { requestBodySizeLimit } = settings;
+    return body.byteLength <= requestBodySizeLimit;
+}
+function checkResponseBody(body, settings) {
+    const { responseBodySizeLimit } = settings;
+    return body.byteLength <= responseBodySizeLimit;
+}
+function validateProps(settings) {  
+    const { propsClientUUID, propsVersion, propsPlatform, propsLabels} = settings;
+    var validatedProps = {};
+    validatedProps.uuid = propsClientUUID;
+    validatedProps.version = propsVersion;
+    validatedProps.platform = propsPlatform;
+    validatedProps.labels = propsLabels;
+    console.log("the platform i validator is  : ",validatedProps.platform);
+    return validatedProps;
+}
+function encodeExchange(state) {
+     const { request, requestDate, requestBody, response, responseDate, responseBody, validatedProps } = state;
+	 var encodedProps = null;
+   
+	 if (validatedProps && (validatedProps.uuid !== null && validatedProps.version !== null && validatedProps.platform !== null)) {
+        encodedProps = encodeProps(validatedProps);
+    }
+    return {
+        request: encodeRequest(request, requestDate, requestBody),
+        response: encodeResponse(request, response, responseDate, responseBody),
+		...(encodedProps && {props: encodedProps}),
+    };
+}
+function encodeRequest(request, requestDate, requestBody) {
+    return {
+        timestamp: requestDate.toISOString(),
+        httpVersion: request.cf?.httpProtocol ?? 'HTTP/2',
+        uri: encodeURI(request.url),
+        method: request.method,
+        originalClientIp: request.headers.get('CF-Connecting-IP') ?? '0.0.0.0',
+        headers: encodeHeaders(request.headers),
+        body: encodeBody(requestBody),
+    };
+}
+function encodeResponse(request, response, responseDate, responseBody) {
+    return {
+        timestamp: responseDate.toISOString(),
+        httpVersion: request.cf?.httpProtocol ?? 'HTTP/2',
+        statusCode: `${response.status} ${response.statusText}`,
+        headers: encodeHeaders(response.headers),
+        body: encodeBody(responseBody),
+    };
+}
+function encodeProps(validatedProps) {
+  return {
+      uuid: validatedProps.uuid,
+      version: validatedProps.version,
+      platform: validatedProps.platform,
+      labels: validatedProps.labels,
+  };
+}
+function encodeString(string) {
+    return typeof Buffer !== 'undefined'
+        ? Buffer.from(string, 'binary').toString('base64')
+        : btoa(string);
+}
+function encodeHeaders(headers) {
+    return [...headers].map(([key, value]) => encodeString(`${key}: ${value}`));
+}
+function encodeBody(body) {
+    let result = '';
+    const view = new Uint8Array(body);
+    view.forEach((byte) => {
+        result += String.fromCharCode(byte);
+    });
+    return encodeString(result);
+}
+
+function getSettings() {
+	var propsClientUUID=null;
+	var propsVersion=null;
+	var propsPlatform=null;
+    var propsLabels = {};
+
+    try{
+	  propsClientUUID = SALT_PROPS_UUID;
+	}catch(error){
+	  
+	}
+	try{
+	  propsVersion = SALT_PROPS_VERSION;
+	}catch(error){
+	  
+	}
+	try{
+	  propsPlatform = SALT_PROPS_PLATFORM;
+	}catch(error){
+	 
+	}
+
+    try{
+	  propsLabels = JSON.parse(SALT_PROPS_LABELS);
+	}catch(error){
+	  
+	}
+    return {
+        apiUrl: SALT_API_URL,
+        authenticationToken: SALT_AUTHENTICATION_TOKEN,
+        collectorId: SALT_COLLECTOR_ID,
+        requestUrlPathWhitelist: JSON.parse(SALT_REQUEST_URL_PATH_WHITELIST),
+        requestUrlPathBlacklist: JSON.parse(SALT_REQUEST_URL_PATH_BLACKLIST),
+        requestHeaderWhitelist: JSON.parse(SALT_REQUEST_HEADER_WHITELIST),
+        requestHeaderBlacklist: JSON.parse(SALT_REQUEST_HEADER_BLACKLIST),
+        requestBodySizeLimit: JSON.parse(SALT_REQUEST_BODY_SIZE_LIMIT),
+        responseHeaderWhitelist: JSON.parse(SALT_RESPONSE_HEADER_WHITELIST),
+        responseHeaderBlacklist: JSON.parse(SALT_RESPONSE_HEADER_BLACKLIST),
+        responseBodySizeLimit: JSON.parse(SALT_RESPONSE_BODY_SIZE_LIMIT),
+		propsClientUUID,
+		propsVersion,
+		propsPlatform,
+		propsLabels,
+    };
+}
+
+async function postExchange(data, settings) {
+    const { apiUrl, authenticationToken, collectorId } = settings;
+    await fetch(getEndpointUrl(apiUrl, '/api/v1/http/exchange', collectorId), {
+        method: 'POST',
+        body: JSON.stringify(data),
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Basic ${authenticationToken}`,
+        },
+    });
+}
+function getEndpointUrl(apiUrl, relativeUrl, collectorId) {
+    const endpointUrl = new URL(relativeUrl, apiUrl);
+    if (collectorId && collectorId.trim()) {
+        endpointUrl.searchParams.set('x-salt-collector-id', collectorId);
+    }
+    return endpointUrl.href;
+}
+
+async function handleExchange(info) {
+    const settings = getSettings();
+    const state = await checkExchange(info, settings);
+    if (state) {
+        const data = await encodeExchange(state);
+        await postExchange(data, settings);
+    }
+}
+
+async function handleRequest(event, handleFetch = fetch, handleError = console.log) {
+    const request = event.request;
+    const requestDate = new Date();
+    const requestClone = request.clone();
+    const response = await handleFetch(request);
+    const responseDate = new Date();
+    const responseClone = response.clone();
+    event.waitUntil(handleExchange({
+        request: requestClone,
+        requestDate,
+        response: responseClone,
+        responseDate,
+    }).catch(handleError));
+    return response;
+}
+
+addEventListener('fetch', (event) => {
+  event.respondWith(handleRequest(event));
+});
